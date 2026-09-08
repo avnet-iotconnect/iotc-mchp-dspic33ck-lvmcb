@@ -1,0 +1,59 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.generated_files/
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+venv/
+.venv/
+ENV/
+
+# Microchip / MPLAB X generated build output
+**/build/
+**/dist/
+**/debug/
+**/release/
+**/*.o
+**/*.obj
+**/*.elf
+**/*.cof
+**/*.map
+**/*.d
+**/*.lst
+**/*.sym
+**/*.sdb
+**/*.p1
+**/*.p2
+**/*.mk
+**/nbproject/private/
+
+# Keep the checked-in firmware release binary in bin/
+!bin/*.hex
+!bin/**/*.hex
+
+# Device provisioning / security artifacts
+*.pem
+*.crt
+*.cer
+*.key
+*.csr
+*.pfx
+*.p12
+*.log
+
+# General temp files
+*.tmp
+*.tmp.*
+*.bak
+*.orig
