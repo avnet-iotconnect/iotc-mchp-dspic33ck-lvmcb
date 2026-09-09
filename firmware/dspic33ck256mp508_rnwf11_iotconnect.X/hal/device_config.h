@@ -42,6 +42,8 @@ typedef struct
     uint16_t mqtt_broker_port;
     char mqtt_username[192]; // IoTConnect's device MQTT username, resolved at provisioning time; empty string if unused
     char mqtt_pub_topic[128]; // IoTConnect's per-device telemetry publish topic, also resolved at provisioning time
+    char mqtt_c2d_topic[128]; // IoTConnect's per-device C2D (command) subscribe topic, also resolved at provisioning time
+    char mqtt_ack_topic[128]; // IoTConnect's per-device command acknowledgement publish topic, also resolved at provisioning time
 
     // Filenames of the CA/root, device cert, and device key already
     // uploaded to the RNWF11's own filesystem by

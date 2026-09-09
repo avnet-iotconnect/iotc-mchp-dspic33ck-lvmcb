@@ -101,6 +101,11 @@ int main(void)
     };
         HAL_BoardService();
 
+        // SW1 stays live as a manual on/off override - e.g. to stop the motor
+        // by hand if the internet connection drops. SW2 (reverse) and the
+        // potentiometer (speed) are intentionally not read: those are cloud-only,
+        // driven by /IOTCONNECT C2D commands (see MCAPP_Motor* in this file and
+        // IOTC_RNWF11_OnCommand() in iotconnect/iotconnect_rnwf11.c).
         if(HAL_IsPressed_Button1())
         {
             if(mcappData.runCmd == 0)
@@ -113,10 +118,6 @@ int main(void)
                 mcappData.runCmd = 0;
                 LED2 = 0;
             }
-        }
-        if(HAL_IsPressed_Button2() && mcappData.changeDirection == 0)
-        {
-            mcappData.changeDirection = 1;
         }
         IOTC_RNWF11_SetTelemetry(&telemetry);
         IOTC_RNWF11_CheckProvisioning();
@@ -167,7 +168,39 @@ void MCAPP_CheckHallUpdatePWM(void)
     }
 }
 /******************************************************************************
- * Description: The ADCAN19 Interrupt operates at 20kHz. The analog data such as 
+ * Description: Cloud (IoTConnect C2D) motor control entry points. Start/stop
+ *              can also come from SW1 (see main()'s loop above) as a manual
+ *              override; direction and speed are cloud-only (SW2 and the
+ *              potentiometer are intentionally not read for those).
+ *****************************************************************************/
+void MCAPP_MotorStart(void)
+{
+    mcappData.runCmd = 1;
+}
+
+void MCAPP_MotorStop(void)
+{
+    mcappData.runCmd = 0;
+}
+
+void MCAPP_MotorReverse(void)
+{
+    if (mcappData.changeDirection == 0)
+    {
+        mcappData.changeDirection = 1;
+    }
+}
+
+void MCAPP_MotorSetSpeedPercent(uint8_t percent)
+{
+    if (percent > 100U)
+    {
+        percent = 100U;
+    }
+    mcappData.desiredSpeed = (uint16_t)(((uint32_t)MAX_MOTORSPEED * percent) / 100U);
+}
+/******************************************************************************
+ * Description: The ADCAN19 Interrupt operates at 20kHz. The analog data such as
  *              the potentiometer voltage, Bus Current are read. It services
  *              the MCAPP_StateMachine routine as well.
  *****************************************************************************/
@@ -280,8 +313,10 @@ void MCAPP_StateMachine(void)
             }
             #endif
 
-            #ifdef   SPEED_PI_CLOSEDLOOP   
-            mcappData.desiredSpeed = (int16_t) (__builtin_mulss(MAX_MOTORSPEED, mcappData.analogInputs.measurePot) >> 15);
+            #ifdef   SPEED_PI_CLOSEDLOOP
+            // desiredSpeed is set exclusively by MCAPP_MotorSetSpeedPercent()
+            // (via a "motor-speed" C2D command) - the potentiometer no longer
+            // drives it, so it is not recomputed here.
             mcappData.piInputSpeed.inMeasure = mcappData.calculateSpeed.speedValue;
             mcappData.piInputSpeed.inReference = mcappData.desiredSpeed;
             MC_ControllerPIUpdate_Assembly(mcappData.piInputSpeed.inReference,

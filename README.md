@@ -316,6 +316,32 @@ reading to /IOTCONNECT every 10 seconds:
 
 Watch it arrive on the device's **Live Data** tab in the /IOTCONNECT console.
 
+### Motor Control Commands
+
+The motor is driven by /IOTCONNECT C2D commands, with SW1 kept live as a manual
+on/off override (e.g. to stop the motor by hand if the internet connection drops).
+SW2 and the potentiometer are intentionally disconnected - direction and speed are
+cloud-only. Add these exact command names to the device template so they show up
+under the device's **Command** tab:
+
+| Command         | Parameter         | Effect                                   |
+|-----------------|--------------------|-------------------------------------------|
+| `motor-start`   | none               | Starts the motor (same effect as pressing SW1 while stopped) |
+| `motor-stop`    | none               | Stops the motor (same effect as pressing SW1 while running)  |
+| `motor-reverse` | none               | Reverses direction                        |
+| `motor-speed`   | integer, `0`-`100` | Sets speed as a percent of max RPM; the motor holds this speed until the next `motor-speed` command (starts at 0 until one is sent) |
+
+If a command is configured with "Require Acknowledgement" in the template, the
+firmware publishes a success/failure ack back to /IOTCONNECT; if not, it just
+applies the command silently.
+
+> [!NOTE]
+> This adds two fields to the on-flash provisioned config (the C2D and ack MQTT
+> topics), which changes its layout. If your board was already provisioned before
+> this change, re-run `provision_device_config.py`/`.ps1` (Step 8) after flashing
+> this firmware - otherwise the old provisioned data just fails its integrity
+> check and falls back to the compile-time defaults, silently skipping C2D setup.
+
 ## 10. Resources
 
 - [AN957 Demo ReadMe MCSK.pdf](firmware/dspic33ck256mp508_rnwf11_iotconnect.X/docs) - Microchip's motor-control reference application this quickstart is built on

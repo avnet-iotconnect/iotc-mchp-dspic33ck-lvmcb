@@ -165,6 +165,15 @@ void MCAPP_CalcMovingAvgSpeed(int16_t avgSpeed); //Calculates Speed by Moving Av
 void MCAPP_StateMachine(void);               //Function to run the State Machine 
 void MCAPP_InitControlParameters(void);      //Initialize PI controller values
 void MCAPP_CheckHallUpdatePWM(void);          //Read Hall Port Data and update PWM switching
+
+// Cloud (IoTConnect C2D) motor control entry points - see IOTC_RNWF11_OnCommand()
+// in iotconnect/iotconnect_rnwf11.c. Start/stop can also come from SW1 (manual
+// override, e.g. if the internet connection drops); direction and speed are
+// cloud-only - SW2 and the potentiometer are intentionally not read.
+void MCAPP_MotorStart(void);
+void MCAPP_MotorStop(void);
+void MCAPP_MotorReverse(void);
+void MCAPP_MotorSetSpeedPercent(uint8_t percent); // 0-100, clamped
 // *****************************************************************************
 // *****************************************************************************
 // Section: Enums, Structures
@@ -207,8 +216,8 @@ typedef struct
     
     uint32_t timerValue;
     
-    uint16_t desiredSpeed;
-    
+    uint16_t desiredSpeed; // set exclusively by MCAPP_MotorSetSpeedPercent() via a "motor-speed" C2D command
+
     uint16_t desiredCurrent;
     int16_t  measuredCurrent;
        

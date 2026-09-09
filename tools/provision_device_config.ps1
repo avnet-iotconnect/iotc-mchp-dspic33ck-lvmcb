@@ -68,6 +68,12 @@ function Resolve-ConnectionInfo {
     if ([string]::IsNullOrEmpty($ident.d.p.topics.rpt)) {
         throw "Identity response did not include a telemetry (rpt) topic"
     }
+    if ([string]::IsNullOrEmpty($ident.d.p.topics.c2d)) {
+        throw "Identity response did not include a C2D (c2d) topic"
+    }
+    if ([string]::IsNullOrEmpty($ident.d.p.topics.ack)) {
+        throw "Identity response did not include an acknowledgement (ack) topic"
+    }
 
     return $ident.d.p
 }
@@ -83,6 +89,8 @@ Write-Host "Resolved broker host: $($identity.h)"
 Write-Host "Resolved MQTT client ID: $($identity.id)"
 Write-Host "Resolved MQTT username: $(if ($identity.un) { $identity.un } else { '(none)' })"
 Write-Host "Resolved telemetry topic: $($identity.topics.rpt)"
+Write-Host "Resolved C2D topic: $($identity.topics.c2d)"
+Write-Host "Resolved ack topic: $($identity.topics.ack)"
 
 $fields = [ordered]@{
     WIFI_SSID        = $WifiSsid
@@ -100,6 +108,8 @@ $fields = [ordered]@{
     MQTT_BROKER_PORT = $MqttPort
     MQTT_USERNAME    = $(if ($identity.un) { $identity.un } else { "" })
     MQTT_PUB_TOPIC   = $identity.topics.rpt
+    MQTT_C2D_TOPIC   = $identity.topics.c2d
+    MQTT_ACK_TOPIC   = $identity.topics.ack
     RNWF_CA_NAME     = $CaName
     RNWF_CERT_NAME   = $CertName
     RNWF_KEY_NAME    = $KeyName

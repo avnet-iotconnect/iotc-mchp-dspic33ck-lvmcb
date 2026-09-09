@@ -12,6 +12,7 @@
 #include "iotcl_telemetry.h"
 #include "../hal/device_config.h"
 #include "../hal/nvm_flash.h"
+#include "../bldc_main.h"
 #include "provisioning.h"
 
 #define IOTC_RNWF11_RESPONSE_SIZE 384U
@@ -30,6 +31,15 @@ static bool mqttLinkUp;
 /* Assume up: the module stays associated across dsPIC resets and only
  * re-announces its IP on a fresh association. */
 static bool netUp = true;
+
+/* Set by PollEvents() when an unsolicited "+MQTTSUBRX:" line names a pending
+ * C2D message; consumed by Task() with an AT+MQTTSUBRD, never from inside
+ * PollEvents() itself - see IOTC_RNWF11_FetchC2dMessage(). */
+#define IOTC_RNWF11_C2D_TOPIC_MAX 128U
+static bool pendingC2dMessage;
+static char pendingC2dTopic[IOTC_RNWF11_C2D_TOPIC_MAX];
+static uint16_t pendingC2dMsgId;
+static uint16_t pendingC2dLength;
 
 /* Populated at boot from flash (see IOTC_RNWF11_Initialize()) if the
  * device has been provisioned via tools/provision_device_config.py/.ps1,
@@ -89,6 +99,9 @@ static void IOTC_RNWF11_Write(const char *text)
 }
 
 static void IOTC_RNWF11_PollEvents(void);
+static void IOTC_RNWF11_OnCommand(IotclC2dEventData data);
+static void IOTC_RNWF11_SendCmdAck(const char *ack_id, int status, const char *message);
+static void IOTC_RNWF11_FetchC2dMessage(void);
 
 static bool IOTC_RNWF11_CommandWithTimeout(const char *command, uint32_t timeout)
 {
@@ -309,6 +322,15 @@ static bool IOTC_RNWF11_Configure(void)
             break;
         }
     }
+
+    /* Subscriptions don't survive a fresh MQTTCONN (clean session), so this
+     * has to be redone on every (re)connect, not just once at boot. */
+    if (mqttLinkUp && (s_cfg.mqtt_c2d_topic[0] != '\0'))
+    {
+        snprintf(command, sizeof(command), "AT+MQTTSUB=\"%s\",1\r\n", s_cfg.mqtt_c2d_topic);
+        (void)IOTC_RNWF11_Step("MQTTSUB", command);
+    }
+
     return mqttLinkUp;
 }
 
@@ -392,6 +414,156 @@ static bool IOTC_RNWF11_PublishTelemetry(void)
     return sent;
 }
 
+/* Only ever called from the top level of Task()/OnCommand(), never from
+ * inside PollEvents() - see the "+MQTTSUBRX:" handling note above. */
+static void IOTC_RNWF11_SendCmdAck(const char *ack_id, int status, const char *message)
+{
+    if (s_cfg.mqtt_ack_topic[0] == '\0')
+    {
+        return;
+    }
+
+    char *json = iotcl_c2d_create_cmd_ack_json(ack_id, status, message);
+    if (json == NULL)
+    {
+        DEBUG_Printf("IOTC: iotcl_c2d_create_cmd_ack_json failed\r\n");
+        return;
+    }
+
+    char escaped[IOTC_RNWF11_ESCAPED_JSON_MAX];
+    if (IOTC_RNWF11_EscapeJsonForAtCommand(json, escaped, sizeof(escaped)))
+    {
+        char command[384];
+        int written = snprintf(command, sizeof(command), "AT+MQTTPUB=0,1,0,\"%s\",\"%s\"\r\n",
+                                s_cfg.mqtt_ack_topic, escaped);
+        if ((written >= 0) && ((size_t)written < sizeof(command)))
+        {
+            (void)IOTC_RNWF11_Step("MQTTPUB-ack", command);
+        }
+    }
+    else
+    {
+        DEBUG_Printf("IOTC: ack JSON too long to escape (%s)\r\n", json);
+    }
+
+    iotcl_c2d_destroy_ack_json(json);
+}
+
+/* Registered as events.cmd_cb in IOTC_RNWF11_Initialize(). Invoked
+ * synchronously from within iotcl_mqtt_receive_c2d_with_length(), called
+ * only from the top level of Task() (see IOTC_RNWF11_FetchC2dMessage()), so
+ * it's safe to issue AT commands (for the ack) from here. */
+static void IOTC_RNWF11_OnCommand(IotclC2dEventData data)
+{
+    const char *ack_id = iotcl_c2d_get_ack_id(data);
+    const char *raw_command = iotcl_c2d_get_command(data);
+    if (raw_command == NULL)
+    {
+        return;
+    }
+
+    char command[64];
+    snprintf(command, sizeof(command), "%s", raw_command);
+    iotcl_free((void *)raw_command);
+
+    char *arg = strchr(command, ' ');
+    if (arg != NULL)
+    {
+        *arg = '\0';
+        arg++;
+    }
+
+    int status = IOTCL_C2D_EVT_CMD_SUCCESS_WITH_ACK;
+    const char *message = NULL;
+
+    if (strcmp(command, "motor-start") == 0)
+    {
+        MCAPP_MotorStart();
+    }
+    else if (strcmp(command, "motor-stop") == 0)
+    {
+        MCAPP_MotorStop();
+    }
+    else if (strcmp(command, "motor-reverse") == 0)
+    {
+        MCAPP_MotorReverse();
+    }
+    else if (strcmp(command, "motor-speed") == 0)
+    {
+        if (arg == NULL)
+        {
+            status = IOTCL_C2D_EVT_CMD_FAILED;
+            message = "motor-speed requires a 0-100 percent argument";
+        }
+        else
+        {
+            int percent = atoi(arg);
+            if (percent < 0)
+            {
+                percent = 0;
+            }
+            MCAPP_MotorSetSpeedPercent((uint8_t)percent);
+        }
+    }
+    else
+    {
+        status = IOTCL_C2D_EVT_CMD_FAILED;
+        message = "unknown command";
+    }
+
+    DEBUG_Printf("IOTC: command \"%s%s%s\" -> %s\r\n", command, arg ? " " : "", arg ? arg : "",
+                 (status == IOTCL_C2D_EVT_CMD_SUCCESS_WITH_ACK) ? "ok" : "failed");
+
+    if (ack_id != NULL)
+    {
+        IOTC_RNWF11_SendCmdAck(ack_id, status, message);
+    }
+}
+
+/* Called only from the top level of Task(), never from inside PollEvents() -
+ * see the "+MQTTSUBRX:" handling note there. */
+static void IOTC_RNWF11_FetchC2dMessage(void)
+{
+    char command[IOTC_RNWF11_C2D_TOPIC_MAX + 32U];
+    int written = snprintf(command, sizeof(command), "AT+MQTTSUBRD=\"%s\",%u,%u\r\n",
+                            pendingC2dTopic, pendingC2dMsgId, pendingC2dLength);
+
+    /* Consume the pending flag regardless of outcome below - a malformed or
+     * oversized message should not be retried forever on every Task() call. */
+    pendingC2dMessage = false;
+
+    if ((written < 0) || ((size_t)written >= sizeof(command)))
+    {
+        DEBUG_Printf("IOTC: MQTTSUBRD command too long for topic %s\r\n", pendingC2dTopic);
+        return;
+    }
+    if (!IOTC_RNWF11_Step("MQTTSUBRD", command))
+    {
+        return;
+    }
+
+    /* lastResponse now holds "+MQTTSUBRD:<msg_id>,<msg_length>,<payload>...OK...". */
+    const char *marker = strstr(lastResponse, "+MQTTSUBRD:");
+    const char *comma1 = (marker != NULL) ? strchr(marker + 11, ',') : NULL;
+    const char *comma2 = (comma1 != NULL) ? strchr(comma1 + 1, ',') : NULL;
+    if (comma2 == NULL)
+    {
+        DEBUG_Printf("IOTC: MQTTSUBRD response malformed: [%s]\r\n", lastResponse);
+        return;
+    }
+
+    const char *payload = comma2 + 1;
+    size_t available = strlen(payload);
+    size_t payloadLen = pendingC2dLength;
+    if (payloadLen > available)
+    {
+        payloadLen = available;
+    }
+
+    DEBUG_Printf("IOTC: C2D message on %s (%u bytes)\r\n", pendingC2dTopic, (unsigned)payloadLen);
+    (void)iotcl_mqtt_receive_c2d_with_length((const uint8_t *)payload, payloadLen);
+}
+
 void IOTC_RNWF11_Initialize(void)
 {
 #if IOTC_RNWF11_ENABLE
@@ -428,6 +600,7 @@ void IOTC_RNWF11_Initialize(void)
     IotclClientConfig iotcl_cfg;
     iotcl_init_client_config(&iotcl_cfg);
     iotcl_cfg.device.instance_type = IOTCL_DCT_CUSTOM; // broker/topic are resolved at provisioning time - see iotconnect_rnwf11_config.h
+    iotcl_cfg.events.cmd_cb = IOTC_RNWF11_OnCommand;
     iotcl_init(&iotcl_cfg);
 
 #if !IOTC_RNWF11_RX_RPn
@@ -518,6 +691,50 @@ static void IOTC_RNWF11_PollEvents(void)
                     /* The module reports this when STA is already connected. */
                     netUp = true;
                 }
+                else if (strncmp(line, "+MQTTSUBRX:", 11) == 0)
+                {
+                    /* Format: +MQTTSUBRX:<DUP>,<QOS>,<RETAIN>,<TOPIC_NAME>,<MSG_ID>,<MSG_LENGTH>
+                     * Deliberately does NOT issue AT+MQTTSUBRD from here - this
+                     * function runs nested inside other in-flight
+                     * IOTC_RNWF11_Command() calls elsewhere in this file, and a
+                     * nested command would stomp the shared lastResponse buffer
+                     * out from under the outer call. Task() picks this up instead. */
+                    const char *p = line + 11;
+                    for (uint8_t skip = 0; (skip < 3U) && (p != NULL); skip++)
+                    {
+                        p = strchr(p, ',');
+                        if (p != NULL)
+                        {
+                            p++;
+                        }
+                    }
+                    if ((p != NULL) && (*p == '"'))
+                    {
+                        const char *topicStart = p + 1;
+                        const char *topicEnd = strchr(topicStart, '"');
+                        if (topicEnd != NULL)
+                        {
+                            size_t topicLen = (size_t)(topicEnd - topicStart);
+                            if (topicLen >= sizeof(pendingC2dTopic))
+                            {
+                                topicLen = sizeof(pendingC2dTopic) - 1U;
+                            }
+                            memcpy(pendingC2dTopic, topicStart, topicLen);
+                            pendingC2dTopic[topicLen] = '\0';
+                            if (*(topicEnd + 1) == ',')
+                            {
+                                const char *msgIdStr = topicEnd + 2;
+                                const char *lenComma = strchr(msgIdStr, ',');
+                                if (lenComma != NULL)
+                                {
+                                    pendingC2dMsgId = (uint16_t)atoi(msgIdStr);
+                                    pendingC2dLength = (uint16_t)atoi(lenComma + 1);
+                                    pendingC2dMessage = true;
+                                }
+                            }
+                        }
+                    }
+                }
                 len = 0;
             }
         }
@@ -563,6 +780,10 @@ void IOTC_RNWF11_Task(void)
 #endif
         telemetryMilliseconds = 0;
         return;
+    }
+    if (pendingC2dMessage)
+    {
+        IOTC_RNWF11_FetchC2dMessage();
     }
     if (telemetryMilliseconds >= IOTC_TELEMETRY_PERIOD_MS)
     {

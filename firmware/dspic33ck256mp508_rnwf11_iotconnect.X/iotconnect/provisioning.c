@@ -61,6 +61,10 @@ static bool ApplyField(device_config_t *cfg, const char *key, const char *value)
         snprintf(cfg->mqtt_username, sizeof(cfg->mqtt_username), "%s", value);
     else if (strcmp(key, "MQTT_PUB_TOPIC") == 0)
         snprintf(cfg->mqtt_pub_topic, sizeof(cfg->mqtt_pub_topic), "%s", value);
+    else if (strcmp(key, "MQTT_C2D_TOPIC") == 0)
+        snprintf(cfg->mqtt_c2d_topic, sizeof(cfg->mqtt_c2d_topic), "%s", value);
+    else if (strcmp(key, "MQTT_ACK_TOPIC") == 0)
+        snprintf(cfg->mqtt_ack_topic, sizeof(cfg->mqtt_ack_topic), "%s", value);
     else if (strcmp(key, "RNWF_CA_NAME") == 0)
         snprintf(cfg->rnwf_ca_name, sizeof(cfg->rnwf_ca_name), "%s", value);
     else if (strcmp(key, "RNWF_CERT_NAME") == 0)

@@ -30,6 +30,10 @@ def resolve_connection_info(cpid: str, env: str, duid: str, platform: str):
     identity = DeviceRestApi(config, verbose=True).get_identity_data()
     if not identity.topics.rpt:
         raise DeviceConfigError("Identity response did not include a telemetry (rpt) topic")
+    if not identity.topics.c2d:
+        raise DeviceConfigError("Identity response did not include a C2D (c2d) topic")
+    if not identity.topics.ack:
+        raise DeviceConfigError("Identity response did not include an acknowledgement (ack) topic")
     return identity
 
 
@@ -97,6 +101,8 @@ def main():
     print(f"Resolved MQTT client ID: {identity.client_id}")
     print(f"Resolved MQTT username: {identity.username or '(none)'}")
     print(f"Resolved telemetry topic: {identity.topics.rpt}")
+    print(f"Resolved C2D topic: {identity.topics.c2d}")
+    print(f"Resolved ack topic: {identity.topics.ack}")
 
     fields = {
         "WIFI_SSID": args.wifi_ssid,
@@ -114,6 +120,8 @@ def main():
         "MQTT_BROKER_PORT": MQTT_PORT,
         "MQTT_USERNAME": identity.username or "",
         "MQTT_PUB_TOPIC": identity.topics.rpt,
+        "MQTT_C2D_TOPIC": identity.topics.c2d,
+        "MQTT_ACK_TOPIC": identity.topics.ack,
         "RNWF_CA_NAME": args.ca_name,
         "RNWF_CERT_NAME": args.cert_name,
         "RNWF_KEY_NAME": args.key_name,
