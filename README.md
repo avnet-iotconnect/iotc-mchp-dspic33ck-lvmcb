@@ -28,12 +28,6 @@ current, duty cycle, etc.) to /IOTCONNECT every 10 seconds.
 9. [Flash and Run the Demo](#9-flash-and-run-the-demo)
 10. [Resources](#10-resources)
 
-The steps below are in the order you actually need to do them: the device
-certificate has to exist before you can create the device in /IOTCONNECT,
-the RNWF11 has to be provisioned with that certificate before it's mounted
-on the starter kit, and your device's resolved connection info has to exist
-before you can put it into the firmware and build.
-
 ## 1. Prerequisites
 
 ### Hardware
@@ -121,11 +115,6 @@ enumerated as - **the full path/name, not just the last part** (e.g.
 - **Windows**: open Device Manager &rarr; **Ports (COM & LPT)** - look for
   "MCP2200 USB Serial Port Emulator" and note its `COMx` number (e.g. `COM6`).
 
-The command below downloads [Amazon Root CA 1](https://www.amazontrust.com/repository/AmazonRootCA1.pem)
-for you, which is the right CA cert if your IoTConnect account is AWS-backed
-(the common case). If your account is Azure-backed instead, download your
-own CA cert first and replace `AmazonRootCA1.pem`/`-CaCertPath` with its path.
-
 This board's firmware expects the default filenames on the RNWF11's own
 filesystem (`root-ca` / `device-cert` / `device-key`, set in
 `iotconnect/iotconnect_rnwf11_config.h`), so the `--ca-name`/`--cert-name`/
@@ -169,12 +158,11 @@ Set-Location ..
 
 This generates a self-signed device certificate, prints it to the terminal,
 and uploads the CA cert, device cert, and device key to the RNWF11's own
-filesystem via `AT+FS`. Keep the terminal output around - you'll paste the
-printed certificate into the IoTConnect console in the next step.
+filesystem via `AT+FS`. You'll paste the printed device certificate into the 
+/IOTCONNECT console in the next step.
 
 > [!NOTE]
-> This takes 30-60 seconds to finish (three separate file uploads over a
-> serial connection) - it hasn't hung if it sits there for a bit.
+> This can take up to 60 seconds to finish depending on your host PC environment.
 
 ## 5. Create the Device in /IOTCONNECT
 
@@ -321,11 +309,8 @@ it arrive on the device's **Live Data** tab in the /IOTCONNECT console.
 
 ### Motor Control Commands
 
-The motor is driven by /IOTCONNECT C2D commands, with SW1 kept live as a manual
-on/off override (e.g. to stop the motor by hand if the internet connection drops).
-SW2 and the potentiometer are intentionally disconnected - direction and speed are
-cloud-only. Add these exact command names to the device template so they show up
-under the device's **Command** tab:
+The motor behavior is primarily driven by /IOTCONNECT C2D commands, but **SW1** on the board itself can be 
+used to toggle the motor power manually.
 
 | Command         | Parameter         | Effect                                   |
 |-----------------|--------------------|-------------------------------------------|
@@ -333,17 +318,6 @@ under the device's **Command** tab:
 | `motor-stop`    | none               | Stops the motor (same effect as pressing SW1 while running)  |
 | `motor-reverse` | none               | Reverses direction                        |
 | `motor-speed`   | integer, `0`-`100` | Sets speed as a percent of max RPM; the motor holds this speed until the next `motor-speed` command (starts at 0 until one is sent) |
-
-If a command is configured with "Require Acknowledgement" in the template, the
-firmware publishes a success/failure ack back to /IOTCONNECT; if not, it just
-applies the command silently.
-
-> [!NOTE]
-> This adds two fields to the on-flash provisioned config (the C2D and ack MQTT
-> topics), which changes its layout. If your board was already provisioned before
-> this change, re-run `provision_device_config.py`/`.ps1` (Step 8) after flashing
-> this firmware - otherwise the old provisioned data just fails its integrity
-> check and falls back to the compile-time defaults, silently skipping C2D setup.
 
 ## 10. Resources
 
