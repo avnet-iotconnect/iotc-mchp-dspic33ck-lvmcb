@@ -1,0 +1,134 @@
+{
+    "code": "dspic33MC",
+    "name": "dspic33MC",
+    "authType": 2,
+    "attributes": [
+        {
+            "name": "random",
+            "displayName": "",
+            "type": "DECIMAL",
+            "description": "A randomly generated number, sent as a basic connectivity check",
+            "unit": "",
+            "attributeColor": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "run",
+            "displayName": "motorRunning",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "st",
+            "displayName": "state",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "sec",
+            "displayName": "sector",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "rpm",
+            "displayName": "requestedSpeedRpm",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "spd",
+            "displayName": "measuredSpeedRpm",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "ic",
+            "displayName": "requestedCurrent",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "im",
+            "displayName": "measuredCurrent",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "duty",
+            "displayName": "dutyCycle",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
+            "name": "vdc",
+            "displayName": "dcBusAdc",
+            "type": "INTEGER",
+            "description": "",
+            "unit": "",
+            "aggregateTypes": []
+        }
+    ],
+    "commands": [
+        {
+            "name": "Stop Motor",
+            "command": "motor-stop",
+            "requiredParam": false,
+            "requiredAck": false,
+            "isOTACommand": false
+        },
+        {
+            "name": "Set Motor Speed Percent",
+            "command": "motor-speed",
+            "requiredParam": true,
+            "requiredAck": false,
+            "isOTACommand": false
+        },
+        {
+            "name": "Reverse Motor Direction",
+            "command": "motor-reverse",
+            "requiredParam": false,
+            "requiredAck": false,
+            "isOTACommand": false
+        },
+        {
+            "name": "Start Motor",
+            "command": "motor-start",
+            "requiredParam": false,
+            "requiredAck": false,
+            "isOTACommand": false
+        }
+    ],
+    "messageVersion": "2.1",
+    "msgCode": "XG4E3KK",
+    "capability": "0",
+    "c2dOnDemand": 0,
+    "enableGeoLocation": "false",
+    "properties": {
+        "description": null,
+        "dataFrequency": "10",
+        "fileSupport": false,
+        "certRenewalDay": 0,
+        "enableCSR": false,
+        "enableGeoLocation": false
+    },
+    "_meta": {
+        "version": "2.0"
+    }
+}

@@ -10,8 +10,8 @@ to [Avnet /IOTCONNECT](https://www.iotconnect.io/) using /IOTCONNECT's
 MCU - the RNWF11 owns the WiFi/MQTT/TLS connection itself, using a
 certificate and key stored on its own filesystem, and the dsPIC33 just
 talks to it over UART with AT commands. While the motor control loop runs
-in real time, the demo publishes a simple random-number telemetry reading
-to /IOTCONNECT every 10 seconds.
+in real time, the demo publishes live motor telemetry (run state, speed,
+current, duty cycle, etc.) to /IOTCONNECT every 10 seconds.
 
 <img src="media/mcsk-product.png" width="400"/>
 
@@ -74,8 +74,8 @@ See [tools/](tools/) for the provisioning scripts you'll use in the next few ste
 
 ## 3. Import the Device Template
 
-This demo publishes a single "random" number telemetry field - import
-[`templates/dspic33-rnwf11-quickstart-template.json`](templates/dspic33-rnwf11-quickstart-template.json).
+This demo publishes live motor telemetry and accepts motor control commands -
+import [`templates/dspic33MC-template.json`](templates/dspic33MC-template.json).
 
 1. Log in at [console.iotconnect.io](https://console.iotconnect.io).
 2. Open the **Device** module:
@@ -91,7 +91,7 @@ This demo publishes a single "random" number telemetry field - import
    <img src="media/create-template-button.png" width="300"/>
 
 5. Click **Import**, and select
-   [`templates/dspic33-rnwf11-quickstart-template.json`](templates/dspic33-rnwf11-quickstart-template.json)
+   [`templates/dspic33MC-template.json`](templates/dspic33MC-template.json)
    from the repo you cloned in Step 2:
 
    <img src="media/import-button.png" width="300"/>
@@ -307,14 +307,17 @@ To watch the boot log, open a serial terminal at 115200 8-N-1.
 > serial console. The firmware routes the serial communications through this port to 
 > prevent users from needing to swap their USB connection between ports on the board.
 
-Once connected, the firmware publishes a simple random-number telemetry
-reading to /IOTCONNECT every 10 seconds:
+Once connected, the firmware publishes live motor telemetry to /IOTCONNECT
+every 10 seconds:
 
 ```json
-{"random": 42}
+{"run": 1, "st": 3, "sec": 4, "rpm": 2300, "spd": 2287, "ic": 0, "im": 12, "duty": 9821, "vdc": 15234}
 ```
 
-Watch it arrive on the device's **Live Data** tab in the /IOTCONNECT console.
+(`run` = motor running, `st` = state machine state, `sec` = commutation
+sector, `rpm`/`spd` = requested/measured speed, `ic`/`im` = requested/measured
+current, `duty` = PWM duty cycle, `vdc` = DC bus voltage ADC reading.) Watch
+it arrive on the device's **Live Data** tab in the /IOTCONNECT console.
 
 ### Motor Control Commands
 
