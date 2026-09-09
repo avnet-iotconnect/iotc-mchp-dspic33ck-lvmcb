@@ -23,8 +23,8 @@ current, duty cycle, etc.) to /IOTCONNECT every 10 seconds.
 4. [Generate and Upload the Device Certificate](#4-generate-and-upload-the-device-certificate)
 5. [Create the Device in /IOTCONNECT](#5-create-the-device-in-iotconnect)
 6. [Mount the RNWF11 on the Starter Kit](#6-mount-the-rnwf11-on-the-starter-kit)
-7. [Resolve Your Device's Connection Info](#7-resolve-your-devices-connection-info)
-8. [Configure and Build the Firmware](#8-configure-and-build-the-firmware)
+7. [Configure the Firmware](#7-configure-the-firmware)
+8. [Build the Firmware](#8-build-the-firmware)
 9. [Flash and Run the Demo](#9-flash-and-run-the-demo)
 10. [Resources](#10-resources)
 
@@ -131,7 +131,7 @@ curl -fsSLO https://www.amazontrust.com/repository/AmazonRootCA1.pem
 Replace `MYPORTNAME` with the port you found above, and `MYUNIQUEID` with a
 Unique ID of your own choosing for this device - pick something memorable,
 e.g. `my-desk-dspic33ck`. You'll reuse whatever you pick later, both when
-creating the device in IoTConnect and when resolving connection info.
+creating the device in /IOTCONNECT and when resolving connection info.
 ```bash
 python3 provision_rnwf11_cert.py --port MYPORTNAME --duid MYUNIQUEID --ca-cert-path AmazonRootCA1.pem
 ```
@@ -148,7 +148,7 @@ Invoke-WebRequest https://www.amazontrust.com/repository/AmazonRootCA1.pem -OutF
 Replace `MYPORTNAME` with the port you found above, and `MYUNIQUEID` with a
 Unique ID of your own choosing for this device - pick something memorable,
 e.g. `my-desk-dspic33ck`. You'll reuse whatever you pick later, both when
-creating the device in IoTConnect and when resolving connection info.
+creating the device in /IOTCONNECT and when resolving connection info.
 ```powershell
 .\provision_rnwf11_cert.ps1 -Port MYPORTNAME -Duid MYUNIQUEID -CaCertPath AmazonRootCA1.pem
 ```
@@ -209,28 +209,26 @@ Move the RNWF11's power jumper back to **HOST3V3**.
 
 <img src="media/mcsk-rnwf-connection.png" width="400"/>
 
-## 7. Resolve Your Device's Connection Info
+## 7. Configure the Firmware
 
-This board has no serial provisioning protocol - WiFi and IoTConnect
-connection details go directly into a header file and get compiled in.
-This step just resolves what those values need to be.
-
-`provision_device_config.py`/`.ps1` prints your device's resolved MQTT
-broker host, client ID, username, and telemetry topic *before* it tries to
-open a serial connection - so you can run it with a placeholder `--port`
-(or `-Port`) purely to get those printed values, then ignore the "could not
-open port" failure that follows.
+`provision_device_config.py`/`.ps1` resolves your device's /IOTCONNECT MQTT
+connection info via /IOTCONNECT's discovery/identity API, then writes it -
+along with your WiFi credentials - directly into
+[`iotconnect/iotconnect_rnwf11_config.h`](firmware/dspic33ck256mp508_rnwf11_iotconnect.X/iotconnect/iotconnect_rnwf11_config.h)
+so it's compiled into the firmware. It finds that file on its own, relative
+to its own location, so there's nothing to copy-paste by hand.
 
 **Linux:**
 ```bash
 cd tools
 ```
 
-Replace `MYCPID`/`MYENVIRONMENT` with the values under **Settings &rarr; Key
-Vault** in the IoTConnect console, and `MYUNIQUEID` with the same Unique ID
+Replace `MYSSID`/`MYPASSWORD` with your real WiFi credentials,
+`MYCPID`/`MYENVIRONMENT` with the values under **Settings &rarr; Key
+Vault** in the /IOTCONNECT console, and `MYUNIQUEID` with the same Unique ID
 you used in Steps 4 and 5:
 ```bash
-python3 provision_device_config.py --port none --wifi-ssid x --wifi-password x --cpid MYCPID --env MYENVIRONMENT --duid MYUNIQUEID
+python3 provision_device_config.py --wifi-ssid MYSSID --wifi-password MYPASSWORD --cpid MYCPID --env MYENVIRONMENT --duid MYUNIQUEID
 ```
 ```bash
 cd ..
@@ -241,37 +239,27 @@ cd ..
 Set-Location tools
 ```
 
-Replace `MYCPID`/`MYENVIRONMENT` with the values under **Settings &rarr; Key
-Vault** in the IoTConnect console, and `MYUNIQUEID` with the same Unique ID
+Replace `MYSSID`/`MYPASSWORD` with your real WiFi credentials,
+`MYCPID`/`MYENVIRONMENT` with the values under **Settings &rarr; Key
+Vault** in the /IOTCONNECT console, and `MYUNIQUEID` with the same Unique ID
 you used in Steps 4 and 5:
 ```powershell
-.\provision_device_config.ps1 -Port none -WifiSsid x -WifiPassword x -Cpid MYCPID -Env MYENVIRONMENT -Duid MYUNIQUEID
+.\provision_device_config.ps1 -WifiSsid MYSSID -WifiPassword MYPASSWORD -Cpid MYCPID -Env MYENVIRONMENT -Duid MYUNIQUEID
 ```
 ```powershell
 Set-Location ..
 ```
 
-Note the four lines it prints: **Resolved broker host**, **Resolved MQTT
-client ID**, **Resolved MQTT username**, and **Resolved telemetry topic** -
-you'll copy these into the firmware in the next step.
+> [!NOTE]
+> Pass `--port`/`-Port` (e.g. `--port /dev/ttyACM0` or `-Port COM5`) to
+> *also* push this same config live, over serial, into an already-flashed,
+> already-running board's on-chip flash - useful for reconfiguring a board
+> without rebuilding. It's optional; omit it and the script only updates the
+> header file above.
 
-## 8. Configure and Build the Firmware
+## 8. Build the Firmware
 
-Open
-[`iotconnect/iotconnect_rnwf11_config.h`](firmware/dspic33ck256mp508_rnwf11_iotconnect.X/iotconnect/iotconnect_rnwf11_config.h)
-and fill in:
-
-- `IOTC_WIFI_SSID` / `IOTC_WIFI_PASSWORD` - your WiFi credentials
-- `IOTC_MQTT_BROKER_HOST` - the **Resolved broker host** value from Step 7
-- `IOTC_MQTT_CLIENT_ID` - the **Resolved MQTT client ID** value (not
-  necessarily your raw `MYUNIQUEID` - IoTConnect assigns a different client
-  ID on some account types, which is why this step resolves it instead of
-  guessing)
-- `IOTC_MQTT_USERNAME` - the **Resolved MQTT username** value (likely empty
-  for an AWS-backed account, which authenticates by certificate instead)
-- `IOTC_MQTT_TELEMETRY_TOPIC` - the **Resolved telemetry topic** value
-
-Then, in MPLAB X:
+In MPLAB X:
 
 1. Open [`firmware/dspic33ck256mp508_rnwf11_iotconnect.X/bldc.X`](firmware/dspic33ck256mp508_rnwf11_iotconnect.X/bldc.X).
 2. Clean and Build. The output `.hex` lands in

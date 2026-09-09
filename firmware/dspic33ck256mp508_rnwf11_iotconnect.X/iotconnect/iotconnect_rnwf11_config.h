@@ -18,20 +18,24 @@
 /* RPnR output code for U2TX, measured on silicon during bring-up. */
 #define IOTC_RNWF11_TX_RPnR_U2TX 0b000011
 
-/* Wi-Fi credentials. Fill these in before flashing, or provision them at
- * runtime instead (see tools/provision_device_config.py). Security: 0=open,
- * 2=WPA2-Personal (mixed TKIP/CCMP), 3=WPA2-Personal (CCMP only). */
+/* Wi-Fi credentials - tools/provision_device_config.py/.ps1 writes these in for
+ * you (--wifi-ssid/--wifi-password), or fill them in by hand before flashing.
+ * Security: 0=open, 2=WPA2-Personal (mixed TKIP/CCMP), 3=WPA2-Personal (CCMP only). */
 #define IOTC_WIFI_SSID "YOUR_WIFI_SSID"
 #define IOTC_WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 #define IOTC_WIFI_SECURITY 2U
 
-/* IoTConnect MQTT endpoint values resolved during device provisioning. */
+/* IoTConnect MQTT endpoint values resolved during device provisioning
+ * (tools/provision_device_config.py/.ps1 writes all of these in for you -
+ * see its --config-header option). */
 #define IOTC_MQTT_BROKER_HOST "a3etk4e19usyja-ats.iot.us-east-1.amazonaws.com"
 #define IOTC_MQTT_BROKER_PORT 8883U
 #define IOTC_MQTT_CLIENT_ID "YOUR_DEVICE_DUID"
 /* AWS IoT Core authenticates by client certificate; it takes no username. */
 #define IOTC_MQTT_USERNAME ""
 #define IOTC_MQTT_TELEMETRY_TOPIC "$aws/rules/msg_d2c_rpt/YOUR_DEVICE_DUID/2.1/0"
+#define IOTC_MQTT_C2D_TOPIC "YOUR_C2D_TOPIC"
+#define IOTC_MQTT_ACK_TOPIC "YOUR_ACK_TOPIC"
 
 /* Read back TLS and MQTT config after provisioning. */
 #define IOTC_DIAG_QUERIES 1

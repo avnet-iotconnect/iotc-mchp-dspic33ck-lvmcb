@@ -8,7 +8,16 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [string]$Port,
+    # Resolved relative to this script's own location ($PSScriptRoot) by
+    # default, so it works no matter what directory the script is invoked from.
+    # Forward slashes here are deliberate, not a typo - .NET's Path APIs treat
+    # them as separators on Windows too, and this needs to resolve correctly
+    # on Linux PowerShell 7+ as well (the README supports both).
+    [string]$ConfigHeader = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../firmware/dspic33ck256mp508_rnwf11_iotconnect.X/iotconnect/iotconnect_rnwf11_config.h")),
+    # Optional - only needed to ALSO live-provision an already-flashed,
+    # already-running board over serial without rebuilding; omit it to just
+    # update -ConfigHeader.
+    [string]$Port = "",
     [int]$Baud = 115200,
     [Parameter(Mandatory)] [string]$WifiSsid,
     [Parameter(Mandatory)] [string]$WifiPassword,
@@ -23,6 +32,34 @@ param(
 
 $ErrorActionPreference = "Stop"
 $MqttPort = 8883
+
+function ConvertTo-CString {
+    param([string]$Value)
+    return $Value.Replace('\', '\\').Replace('"', '\"')
+}
+
+# Whole-line replacement of a '#define NAME "..."' line - simpler and safer
+# than a regex-based in-place substitution, since it sidesteps .NET's
+# replacement-string syntax (where a literal '$' - e.g. in an AWS topic like
+# "$aws/rules/...") would otherwise need its own escaping.
+function Set-Define {
+    param([string[]]$Lines, [string]$Name, [string]$Value)
+    $escaped = ConvertTo-CString -Value $Value
+    $prefix = "#define $Name "
+    $matchCount = 0
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $trimmed = $Lines[$i].TrimStart()
+        if ($trimmed.StartsWith($prefix)) {
+            $matchCount++
+            $indent = $Lines[$i].Substring(0, $Lines[$i].Length - $trimmed.Length)
+            $Lines[$i] = "$indent#define $Name `"$escaped`""
+        }
+    }
+    if ($matchCount -ne 1) {
+        throw "Expected exactly one '#define $Name ""..."" ' line in the config header, found $matchCount"
+    }
+    return ,$Lines
+}
 
 function Invoke-DraRequest {
     # Invoke-RestMethod throws on non-2xx HTTP responses (same as Python's
@@ -91,6 +128,33 @@ Write-Host "Resolved MQTT username: $(if ($identity.un) { $identity.un } else { 
 Write-Host "Resolved telemetry topic: $($identity.topics.rpt)"
 Write-Host "Resolved C2D topic: $($identity.topics.c2d)"
 Write-Host "Resolved ack topic: $($identity.topics.ack)"
+
+try {
+    $lines = Get-Content -Path $ConfigHeader
+    $defines = [ordered]@{
+        IOTC_WIFI_SSID            = $WifiSsid
+        IOTC_WIFI_PASSWORD        = $WifiPassword
+        IOTC_MQTT_BROKER_HOST     = $identity.h
+        IOTC_MQTT_CLIENT_ID       = $identity.id
+        IOTC_MQTT_USERNAME        = $(if ($identity.un) { $identity.un } else { "" })
+        IOTC_MQTT_TELEMETRY_TOPIC = $identity.topics.rpt
+        IOTC_MQTT_C2D_TOPIC       = $identity.topics.c2d
+        IOTC_MQTT_ACK_TOPIC       = $identity.topics.ack
+    }
+    foreach ($name in $defines.Keys) {
+        $lines = Set-Define -Lines $lines -Name $name -Value $defines[$name]
+    }
+    Set-Content -Path $ConfigHeader -Value $lines
+    Write-Host "Updated $ConfigHeader with your WiFi credentials and resolved IoTConnect connection info."
+} catch {
+    Write-Host "FAILED: could not update $ConfigHeader`: $_"
+    exit 1
+}
+
+if ([string]::IsNullOrEmpty($Port)) {
+    Write-Host "SUCCESS: config header updated. Rebuild and reflash the firmware to apply it."
+    exit 0
+}
 
 $fields = [ordered]@{
     WIFI_SSID        = $WifiSsid
@@ -177,4 +241,4 @@ try {
     $serialPort.Close()
 }
 
-Write-Host "SUCCESS: device provisioned. It should now connect to WiFi and IoTConnect."
+Write-Host "SUCCESS: config header updated, and the already-flashed device was live-provisioned over serial too."

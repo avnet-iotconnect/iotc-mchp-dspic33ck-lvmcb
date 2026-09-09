@@ -1,18 +1,24 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 Avnet
 #
-# One-time (or re-run any time you need to change something) provisioning step 2:
-# resolves this device's IoTConnect MQTT connection info via the DRA discovery/identity
-# API (using iotconnect-sdk-lite's public DeviceRestApi - no MQTT connection is made),
-# then pushes WiFi + IoTConnect config into the dsPIC33's on-chip flash over its debug
-# console UART. The board must already be running the quickstart firmware and printing
-# "Not provisioned yet." Run tools/provision_rnwf11_cert.py first (see the README) - the
-# cert/key/CA filenames it uploaded to the RNWF11 are passed here so the device knows
-# which stored files to use for TLS.
+# Provisioning step 2: resolves this device's IoTConnect MQTT connection info via the
+# DRA discovery/identity API (using iotconnect-sdk-lite's public DeviceRestApi - no MQTT
+# connection is made), then writes it - along with your WiFi credentials - directly into
+# iotconnect_rnwf11_config.h (--config-header, resolved relative to this script's own
+# location by default, so it works regardless of your current directory) so it gets
+# compiled into the firmware. Rebuild and reflash after running this.
+#
+# Pass --port to ALSO push the same config live, over serial, into an already-flashed,
+# already-running board's on-chip flash (no rebuild/reflash needed) - useful for
+# reconfiguring a board without touching its firmware. Run tools/provision_rnwf11_cert.py
+# first (see the README) - the cert/key/CA filenames it uploaded to the RNWF11 are passed
+# here so the device knows which stored files to use for TLS.
 
 import argparse
+import re
 import sys
 import time
+from pathlib import Path
 
 import serial
 
@@ -21,6 +27,59 @@ from avnet.iotconnect.sdk.sdklib.dra import DeviceRestApi
 from avnet.iotconnect.sdk.sdklib.error import DeviceConfigError
 
 MQTT_PORT = 8883
+
+# Same layout as this script's own location relative to the repo root - resolving from
+# __file__ means this works no matter what directory the script is invoked from.
+DEFAULT_CONFIG_HEADER = (
+    Path(__file__).resolve().parent.parent
+    / "firmware" / "dspic33ck256mp508_rnwf11_iotconnect.X" / "iotconnect" / "iotconnect_rnwf11_config.h"
+)
+
+# The #define names in iotconnect_rnwf11_config.h that this script fills in - all
+# string-valued (quoted), in the order they appear in the header.
+CONFIG_HEADER_STRING_DEFINES = [
+    "IOTC_WIFI_SSID",
+    "IOTC_WIFI_PASSWORD",
+    "IOTC_MQTT_BROKER_HOST",
+    "IOTC_MQTT_CLIENT_ID",
+    "IOTC_MQTT_USERNAME",
+    "IOTC_MQTT_TELEMETRY_TOPIC",
+    "IOTC_MQTT_C2D_TOPIC",
+    "IOTC_MQTT_ACK_TOPIC",
+]
+
+
+def escape_c_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def set_define(text: str, name: str, value: str) -> str:
+    escaped = escape_c_string(value)
+    pattern = re.compile(rf'(#define\s+{re.escape(name)}\s+)"[^"]*"')
+    new_text, count = pattern.subn(lambda m: m.group(1) + f'"{escaped}"', text)
+    if count != 1:
+        raise DeviceConfigError(
+            f"Expected exactly one '#define {name} \"...\"' line in the config header, found {count}"
+        )
+    return new_text
+
+
+def write_config_header(path: Path, wifi_ssid: str, wifi_password: str, identity) -> None:
+    values = {
+        "IOTC_WIFI_SSID": wifi_ssid,
+        "IOTC_WIFI_PASSWORD": wifi_password,
+        "IOTC_MQTT_BROKER_HOST": identity.host,
+        "IOTC_MQTT_CLIENT_ID": identity.client_id,
+        "IOTC_MQTT_USERNAME": identity.username or "",
+        "IOTC_MQTT_TELEMETRY_TOPIC": identity.topics.rpt,
+        "IOTC_MQTT_C2D_TOPIC": identity.topics.c2d,
+        "IOTC_MQTT_ACK_TOPIC": identity.topics.ack,
+    }
+    text = path.read_text()
+    for name in CONFIG_HEADER_STRING_DEFINES:
+        text = set_define(text, name, values[name])
+    path.write_text(text)
+    print(f"Updated {path} with your WiFi credentials and resolved IoTConnect connection info.")
 
 
 def resolve_connection_info(cpid: str, env: str, duid: str, platform: str):
@@ -78,10 +137,16 @@ def send_provisioning_protocol(ser: serial.Serial, fields: dict, overall_timeout
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", required=True, help="Serial port for the dsPIC33's debug console (e.g. COM5 or /dev/ttyACM0)")
+    parser.add_argument("--config-header", type=Path, default=DEFAULT_CONFIG_HEADER,
+                         help=f"Path to iotconnect_rnwf11_config.h to write into (default: resolved relative to "
+                              f"this script's own location, currently {DEFAULT_CONFIG_HEADER})")
+    parser.add_argument("--port", default=None,
+                         help="Serial port for the dsPIC33's debug console (e.g. COM5 or /dev/ttyACM0). Optional - "
+                              "only needed to ALSO live-provision an already-flashed, already-running board over "
+                              "serial without rebuilding; omit it to just update --config-header.")
     parser.add_argument("--baud", type=int, default=115200, help="Debug console baud rate (default: 115200, matches UART1_Initialize() in the firmware)")
-    parser.add_argument("--wifi-ssid", required=True)
-    parser.add_argument("--wifi-password", required=True)
+    parser.add_argument("--wifi-ssid", required=True, help="Your WiFi network name")
+    parser.add_argument("--wifi-password", required=True, help="Your WiFi network password")
     parser.add_argument("--cpid", required=True, help="IoTConnect account CPID (Settings -> Key Value in the IoTConnect console)")
     parser.add_argument("--env", required=True, help="IoTConnect account Environment (Settings -> Key Value)")
     parser.add_argument("--duid", required=True, help="This device's Unique ID, as entered when you created the device in the IoTConnect console")
@@ -103,6 +168,19 @@ def main():
     print(f"Resolved telemetry topic: {identity.topics.rpt}")
     print(f"Resolved C2D topic: {identity.topics.c2d}")
     print(f"Resolved ack topic: {identity.topics.ack}")
+
+    try:
+        write_config_header(args.config_header, args.wifi_ssid, args.wifi_password, identity)
+    except OSError as e:
+        print(f"FAILED: could not update {args.config_header}: {e}")
+        sys.exit(1)
+    except DeviceConfigError as e:
+        print(f"FAILED: {e}")
+        sys.exit(1)
+
+    if not args.port:
+        print("SUCCESS: config header updated. Rebuild and reflash the firmware to apply it.")
+        return
 
     fields = {
         "WIFI_SSID": args.wifi_ssid,
@@ -137,7 +215,7 @@ def main():
         print(f"FAILED: could not open {args.port}: {e}")
         sys.exit(1)
 
-    print("SUCCESS: device provisioned. It should now connect to WiFi and IoTConnect.")
+    print("SUCCESS: config header updated, and the already-flashed device was live-provisioned over serial too.")
 
 
 if __name__ == "__main__":

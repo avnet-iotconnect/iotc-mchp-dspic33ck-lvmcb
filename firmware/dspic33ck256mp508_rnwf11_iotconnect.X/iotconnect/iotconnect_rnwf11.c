@@ -589,6 +589,8 @@ void IOTC_RNWF11_Initialize(void)
         snprintf(s_cfg.mqtt_client_id, sizeof(s_cfg.mqtt_client_id), "%s", IOTC_MQTT_CLIENT_ID);
         snprintf(s_cfg.mqtt_username, sizeof(s_cfg.mqtt_username), "%s", IOTC_MQTT_USERNAME);
         snprintf(s_cfg.mqtt_pub_topic, sizeof(s_cfg.mqtt_pub_topic), "%s", IOTC_MQTT_TELEMETRY_TOPIC);
+        snprintf(s_cfg.mqtt_c2d_topic, sizeof(s_cfg.mqtt_c2d_topic), "%s", IOTC_MQTT_C2D_TOPIC);
+        snprintf(s_cfg.mqtt_ack_topic, sizeof(s_cfg.mqtt_ack_topic), "%s", IOTC_MQTT_ACK_TOPIC);
         snprintf(s_cfg.rnwf_ca_name, sizeof(s_cfg.rnwf_ca_name), "%s", IOTC_RNWF11_CA_NAME);
         snprintf(s_cfg.rnwf_cert_name, sizeof(s_cfg.rnwf_cert_name), "%s", IOTC_RNWF11_CERT_NAME);
         snprintf(s_cfg.rnwf_key_name, sizeof(s_cfg.rnwf_key_name), "%s", IOTC_RNWF11_KEY_NAME);

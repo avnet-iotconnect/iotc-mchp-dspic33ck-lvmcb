@@ -2,7 +2,7 @@
 
 Screenshots/photos referenced by the top-level README.md.
 
-Generic RNWF11/IoTConnect walkthrough images (show the RNWF11 module itself
+Generic RNWF11 and /IOTCONNECT walkthrough images (show the RNWF11 module itself
 or generic /IOTCONNECT console UI, not anything board-specific):
 
 - `jumper-flashing.png` / `jumper-running.png` - RNWF11 power jumper in its `PC3V3`/`HOST3V3` positions, shown
