@@ -65,6 +65,7 @@ extern "C" {
 #include "port_config.h"
 #include "library/library-motor/motor_control_types.h"
 #include "library/library-motor/motor_control_declarations.h"
+#include "motor_commands.h"
 // *****************************************************************************
 // *****************************************************************************
 // Section: MODE OF OPERATION
@@ -165,15 +166,8 @@ void MCAPP_CalcMovingAvgSpeed(int16_t avgSpeed); //Calculates Speed by Moving Av
 void MCAPP_StateMachine(void);               //Function to run the State Machine 
 void MCAPP_InitControlParameters(void);      //Initialize PI controller values
 void MCAPP_CheckHallUpdatePWM(void);          //Read Hall Port Data and update PWM switching
-
-// Cloud (IoTConnect C2D) motor control entry points - see IOTC_RNWF11_OnCommand()
-// in iotconnect/iotconnect_rnwf11.c. Start/stop can also come from SW1 (manual
-// override, e.g. if the internet connection drops); direction and speed are
-// cloud-only - SW2 and the potentiometer are intentionally not read.
-void MCAPP_MotorStart(void);
-void MCAPP_MotorStop(void);
-void MCAPP_MotorReverse(void);
-void MCAPP_MotorSetSpeedPercent(uint8_t percent); // 0-100, clamped
+// MCAPP_Motor{Start,Stop,Reverse,SetSpeedPercent} are declared in motor_commands.h
+// (included above) - see that header for why they live separately.
 // *****************************************************************************
 // *****************************************************************************
 // Section: Enums, Structures

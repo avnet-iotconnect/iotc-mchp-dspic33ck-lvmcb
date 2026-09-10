@@ -305,7 +305,7 @@ used to toggle the motor power manually.
 | `motor-start`   | none               | Starts the motor (same effect as pressing SW1 while stopped) |
 | `motor-stop`    | none               | Stops the motor (same effect as pressing SW1 while running)  |
 | `motor-reverse` | none               | Reverses direction                        |
-| `motor-speed`   | integer, `0`-`100` | Sets speed as a percent of max RPM; the motor holds this speed until the next `motor-speed` command (starts at 0 until one is sent) |
+| `motor-speed`   | integer, `0`-`100` | Sets speed as a percent of max RPM; the motor holds this speed until the next `motor-speed` command (defaults to 50% at boot, until one is sent) |
 
 ## 10. Resources
 

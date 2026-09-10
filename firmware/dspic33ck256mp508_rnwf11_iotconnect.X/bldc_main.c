@@ -67,7 +67,13 @@
 // Section: MODE OF OPERATION
 // *****************************************************************************
 // *****************************************************************************  
-MCAPP_DATA_T     mcappData;
+// desiredSpeed defaults to 50% of MAX_MOTORSPEED so the motor has a sensible
+// speed to run at before the first "motor-speed" C2D command ever arrives.
+// This is a one-time boot default, not reapplied on every stop/restart -
+// MCAPP_INIT (re-entered on every stop cycle) deliberately does not touch it,
+// so a speed set via MCAPP_MotorSetSpeedPercent() still holds across a
+// motor-stop/motor-start cycle, per its documented behavior.
+MCAPP_DATA_T     mcappData = { .desiredSpeed = (MAX_MOTORSPEED * 50) / 100 };
 /******************************************************************************
  * Description: The main function initialises the microcontroller port configurations
  *              and settings. It is the main program which also reads the button 
@@ -110,13 +116,11 @@ int main(void)
         {
             if(mcappData.runCmd == 0)
             {
-                mcappData.runCmd = 1;
-                LED2 = 1;
+                MCAPP_MotorStart();
             }
             else
             {
-                mcappData.runCmd = 0;
-                LED2 = 0;
+                MCAPP_MotorStop();
             }
         }
         IOTC_RNWF11_SetTelemetry(&telemetry);
@@ -171,16 +175,20 @@ void MCAPP_CheckHallUpdatePWM(void)
  * Description: Cloud (IoTConnect C2D) motor control entry points. Start/stop
  *              can also come from SW1 (see main()'s loop above) as a manual
  *              override; direction and speed are cloud-only (SW2 and the
- *              potentiometer are intentionally not read for those).
+ *              potentiometer are intentionally not read for those). LED2
+ *              lives here (not in main()'s button handler) so it reflects
+ *              runCmd regardless of which path changed it.
  *****************************************************************************/
 void MCAPP_MotorStart(void)
 {
     mcappData.runCmd = 1;
+    LED2 = 1;
 }
 
 void MCAPP_MotorStop(void)
 {
     mcappData.runCmd = 0;
+    LED2 = 0;
 }
 
 void MCAPP_MotorReverse(void)

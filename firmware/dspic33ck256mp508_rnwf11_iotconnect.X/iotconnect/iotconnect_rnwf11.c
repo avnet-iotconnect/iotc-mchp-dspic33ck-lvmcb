@@ -12,7 +12,7 @@
 #include "iotcl_telemetry.h"
 #include "../hal/device_config.h"
 #include "../hal/nvm_flash.h"
-#include "../bldc_main.h"
+#include "../motor_commands.h"
 #include "provisioning.h"
 
 #define IOTC_RNWF11_RESPONSE_SIZE 384U
@@ -32,14 +32,20 @@ static bool mqttLinkUp;
  * re-announces its IP on a fresh association. */
 static bool netUp = true;
 
-/* Set by PollEvents() when an unsolicited "+MQTTSUBRX:" line names a pending
- * C2D message; consumed by Task() with an AT+MQTTSUBRD, never from inside
- * PollEvents() itself - see IOTC_RNWF11_FetchC2dMessage(). */
+/* Set by PollEvents() when an unsolicited "+MQTTSUBRX:" line carries a C2D
+ * message; consumed by Task(), never from inside PollEvents() itself - see
+ * the "+MQTTSUBRX:" handling note there. The module inlines the payload
+ * directly in that line for messages under its read threshold (AT+MQTTC=9,
+ * 128 bytes by default), which every C2D command this firmware supports is
+ * well under. A payload at or above that threshold is not handled (per
+ * Microchip's Appendix A.5, AT+MQTTSUBRD would be needed instead, but that
+ * path is unverified against real hardware and unnecessary for our short
+ * commands). */
 #define IOTC_RNWF11_C2D_TOPIC_MAX 128U
+#define IOTC_RNWF11_C2D_PAYLOAD_MAX 256U
 static bool pendingC2dMessage;
-static char pendingC2dTopic[IOTC_RNWF11_C2D_TOPIC_MAX];
-static uint16_t pendingC2dMsgId;
-static uint16_t pendingC2dLength;
+static char pendingC2dPayload[IOTC_RNWF11_C2D_PAYLOAD_MAX];
+static size_t pendingC2dPayloadLen;
 
 /* Populated at boot from flash (see IOTC_RNWF11_Initialize()) if the
  * device has been provisioned via tools/provision_device_config.py/.ps1,
@@ -101,7 +107,6 @@ static void IOTC_RNWF11_Write(const char *text)
 static void IOTC_RNWF11_PollEvents(void);
 static void IOTC_RNWF11_OnCommand(IotclC2dEventData data);
 static void IOTC_RNWF11_SendCmdAck(const char *ack_id, int status, const char *message);
-static void IOTC_RNWF11_FetchC2dMessage(void);
 
 static bool IOTC_RNWF11_CommandWithTimeout(const char *command, uint32_t timeout)
 {
@@ -360,6 +365,44 @@ static bool IOTC_RNWF11_EscapeJsonForAtCommand(const char *json, char *out, size
     return true;
 }
 
+/* Inverse of IOTC_RNWF11_EscapeJsonForAtCommand() - the module applies the
+ * same backslash-quote escaping to inbound quoted string fields (seen in
+ * "+MQTTSUBRX:" - see the pendingC2dPayload comment above) as we apply to
+ * outbound ones. Copies src into dst, un-escaping as it goes, stopping at
+ * the first unescaped '"'. Returns a pointer just past that closing quote,
+ * or NULL if src ends before an unescaped '"' is found. *out_len is set to
+ * the un-escaped length copied into dst (truncated to fit dst_size, always
+ * null-terminated).*/
+static const char *IOTC_RNWF11_UnescapeQuotedString(const char *src, char *dst, size_t dst_size, size_t *out_len)
+{
+    size_t o = 0;
+    while (*src != '\0')
+    {
+        if (*src == '"')
+        {
+            if (out_len != NULL)
+            {
+                *out_len = o;
+            }
+            dst[(o < dst_size) ? o : (dst_size - 1U)] = '\0';
+            return src + 1;
+        }
+        char c = *src;
+        if ((c == '\\') && (*(src + 1) != '\0'))
+        {
+            src++;
+            c = *src;
+        }
+        if (o < (dst_size - 1U))
+        {
+            dst[o] = c;
+        }
+        o++;
+        src++;
+    }
+    return NULL;
+}
+
 static bool IOTC_RNWF11_PublishTelemetry(void)
 {
     IotclMessageHandle msg = iotcl_telemetry_create();
@@ -450,9 +493,9 @@ static void IOTC_RNWF11_SendCmdAck(const char *ack_id, int status, const char *m
 }
 
 /* Registered as events.cmd_cb in IOTC_RNWF11_Initialize(). Invoked
- * synchronously from within iotcl_mqtt_receive_c2d_with_length(), called
- * only from the top level of Task() (see IOTC_RNWF11_FetchC2dMessage()), so
- * it's safe to issue AT commands (for the ack) from here. */
+ * synchronously from within iotcl_mqtt_receive_c2d_with_length(), called only
+ * from the top level of Task() (see its pendingC2dMessage handling), so it's
+ * safe to issue AT commands (for the ack) from here. */
 static void IOTC_RNWF11_OnCommand(IotclC2dEventData data)
 {
     const char *ack_id = iotcl_c2d_get_ack_id(data);
@@ -462,9 +505,14 @@ static void IOTC_RNWF11_OnCommand(IotclC2dEventData data)
         return;
     }
 
+    /* Despite iotcl_c2d_get_command()'s header comment ("returns a malloc-ed
+     * copy... must be freed"), the pinned iotc-c-lib version actually returns
+     * cJSON_GetStringValue()'s raw pointer straight into the parsed tree, not
+     * a copy - freeing it here double-frees it when iotcl_c2d_destroy_event()
+     * (called automatically right after this callback returns) deletes the
+     * whole tree, corrupting the heap. Copy it out; do not free raw_command. */
     char command[64];
     snprintf(command, sizeof(command), "%s", raw_command);
-    iotcl_free((void *)raw_command);
 
     char *arg = strchr(command, ' ');
     if (arg != NULL)
@@ -490,17 +538,24 @@ static void IOTC_RNWF11_OnCommand(IotclC2dEventData data)
     }
     else if (strcmp(command, "motor-speed") == 0)
     {
-        if (arg == NULL)
+        char *endptr = NULL;
+        long percent = (arg != NULL) ? strtol(arg, &endptr, 10) : 0;
+        if ((arg == NULL) || (endptr == arg) || (*endptr != '\0'))
         {
             status = IOTCL_C2D_EVT_CMD_FAILED;
-            message = "motor-speed requires a 0-100 percent argument";
+            message = "motor-speed requires an integer 0-100 percent argument";
         }
         else
         {
-            int percent = atoi(arg);
+            /* Clamp before the uint8_t cast below - clamping after would let
+             * an out-of-range value (e.g. 300) wrap modulo 256 instead. */
             if (percent < 0)
             {
                 percent = 0;
+            }
+            else if (percent > 100)
+            {
+                percent = 100;
             }
             MCAPP_MotorSetSpeedPercent((uint8_t)percent);
         }
@@ -518,50 +573,6 @@ static void IOTC_RNWF11_OnCommand(IotclC2dEventData data)
     {
         IOTC_RNWF11_SendCmdAck(ack_id, status, message);
     }
-}
-
-/* Called only from the top level of Task(), never from inside PollEvents() -
- * see the "+MQTTSUBRX:" handling note there. */
-static void IOTC_RNWF11_FetchC2dMessage(void)
-{
-    char command[IOTC_RNWF11_C2D_TOPIC_MAX + 32U];
-    int written = snprintf(command, sizeof(command), "AT+MQTTSUBRD=\"%s\",%u,%u\r\n",
-                            pendingC2dTopic, pendingC2dMsgId, pendingC2dLength);
-
-    /* Consume the pending flag regardless of outcome below - a malformed or
-     * oversized message should not be retried forever on every Task() call. */
-    pendingC2dMessage = false;
-
-    if ((written < 0) || ((size_t)written >= sizeof(command)))
-    {
-        DEBUG_Printf("IOTC: MQTTSUBRD command too long for topic %s\r\n", pendingC2dTopic);
-        return;
-    }
-    if (!IOTC_RNWF11_Step("MQTTSUBRD", command))
-    {
-        return;
-    }
-
-    /* lastResponse now holds "+MQTTSUBRD:<msg_id>,<msg_length>,<payload>...OK...". */
-    const char *marker = strstr(lastResponse, "+MQTTSUBRD:");
-    const char *comma1 = (marker != NULL) ? strchr(marker + 11, ',') : NULL;
-    const char *comma2 = (comma1 != NULL) ? strchr(comma1 + 1, ',') : NULL;
-    if (comma2 == NULL)
-    {
-        DEBUG_Printf("IOTC: MQTTSUBRD response malformed: [%s]\r\n", lastResponse);
-        return;
-    }
-
-    const char *payload = comma2 + 1;
-    size_t available = strlen(payload);
-    size_t payloadLen = pendingC2dLength;
-    if (payloadLen > available)
-    {
-        payloadLen = available;
-    }
-
-    DEBUG_Printf("IOTC: C2D message on %s (%u bytes)\r\n", pendingC2dTopic, (unsigned)payloadLen);
-    (void)iotcl_mqtt_receive_c2d_with_length((const uint8_t *)payload, payloadLen);
 }
 
 void IOTC_RNWF11_Initialize(void)
@@ -695,12 +706,18 @@ static void IOTC_RNWF11_PollEvents(void)
                 }
                 else if (strncmp(line, "+MQTTSUBRX:", 11) == 0)
                 {
-                    /* Format: +MQTTSUBRX:<DUP>,<QOS>,<RETAIN>,<TOPIC_NAME>,<MSG_ID>,<MSG_LENGTH>
-                     * Deliberately does NOT issue AT+MQTTSUBRD from here - this
-                     * function runs nested inside other in-flight
-                     * IOTC_RNWF11_Command() calls elsewhere in this file, and a
-                     * nested command would stomp the shared lastResponse buffer
-                     * out from under the outer call. Task() picks this up instead. */
+                    /* Observed format: +MQTTSUBRX:<DUP>,<QOS>,<RETAIN>,"<TOPIC_NAME>","<PAYLOAD>"
+                     * (confirmed against real hardware - the module inlines
+                     * the payload here rather than requiring a follow-up
+                     * AT+MQTTSUBRD for messages under its read threshold; see
+                     * the pendingC2dPayload comment above). Deliberately does
+                     * not act on the message from here - iotcl_mqtt_receive_c2d_with_length()
+                     * may itself publish a command ack (an AT command), and
+                     * this function runs nested inside other in-flight
+                     * IOTC_RNWF11_Command() calls elsewhere in this file, so a
+                     * nested command here would stomp the shared lastResponse
+                     * buffer out from under the outer call. Task() picks the
+                     * stored payload up instead, from its own top-level call. */
                     const char *p = line + 11;
                     for (uint8_t skip = 0; (skip < 3U) && (p != NULL); skip++)
                     {
@@ -712,27 +729,17 @@ static void IOTC_RNWF11_PollEvents(void)
                     }
                     if ((p != NULL) && (*p == '"'))
                     {
-                        const char *topicStart = p + 1;
-                        const char *topicEnd = strchr(topicStart, '"');
-                        if (topicEnd != NULL)
+                        char discardTopic[IOTC_RNWF11_C2D_TOPIC_MAX];
+                        const char *afterTopic = IOTC_RNWF11_UnescapeQuotedString(p + 1, discardTopic, sizeof(discardTopic), NULL);
+                        if ((afterTopic != NULL) && (*afterTopic == ',') && (*(afterTopic + 1) == '"'))
                         {
-                            size_t topicLen = (size_t)(topicEnd - topicStart);
-                            if (topicLen >= sizeof(pendingC2dTopic))
+                            size_t payloadLen = 0;
+                            const char *afterPayload = IOTC_RNWF11_UnescapeQuotedString(afterTopic + 2, pendingC2dPayload,
+                                                                                         sizeof(pendingC2dPayload), &payloadLen);
+                            if (afterPayload != NULL)
                             {
-                                topicLen = sizeof(pendingC2dTopic) - 1U;
-                            }
-                            memcpy(pendingC2dTopic, topicStart, topicLen);
-                            pendingC2dTopic[topicLen] = '\0';
-                            if (*(topicEnd + 1) == ',')
-                            {
-                                const char *msgIdStr = topicEnd + 2;
-                                const char *lenComma = strchr(msgIdStr, ',');
-                                if (lenComma != NULL)
-                                {
-                                    pendingC2dMsgId = (uint16_t)atoi(msgIdStr);
-                                    pendingC2dLength = (uint16_t)atoi(lenComma + 1);
-                                    pendingC2dMessage = true;
-                                }
+                                pendingC2dPayloadLen = payloadLen;
+                                pendingC2dMessage = true;
                             }
                         }
                     }
@@ -785,7 +792,9 @@ void IOTC_RNWF11_Task(void)
     }
     if (pendingC2dMessage)
     {
-        IOTC_RNWF11_FetchC2dMessage();
+        pendingC2dMessage = false;
+        DEBUG_Printf("IOTC: C2D message (%u bytes): %s\r\n", (unsigned)pendingC2dPayloadLen, pendingC2dPayload);
+        (void)iotcl_mqtt_receive_c2d_with_length((const uint8_t *)pendingC2dPayload, pendingC2dPayloadLen);
     }
     if (telemetryMilliseconds >= IOTC_TELEMETRY_PERIOD_MS)
     {
